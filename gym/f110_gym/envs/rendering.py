@@ -30,10 +30,12 @@ Author: Hongrui Zheng
 # opengl stuff
 import pyglet
 from pyglet.gl import *
+from pyglet import image, shapes
+from pyglet.math import Mat4
 
 # other
 import numpy as np
-from PIL import Image
+# from PIL import Image
 import yaml
 
 # helpers
@@ -66,7 +68,7 @@ class EnvRenderer(pyglet.window.Window):
                       samples=4,
                       depth_size=16,
                       double_buffer=True)
-        super().__init__(width, height, config=conf, resizable=True, vsync=False, *args, **kwargs)
+        super().__init__(width, height, config=conf, resizable=False, vsync=False, *args, **kwargs)
 
         # gl init
         glClearColor(9/255, 32/255, 87/255, 1.)
@@ -76,7 +78,7 @@ class EnvRenderer(pyglet.window.Window):
         self.right = width/2
         self.bottom = -height/2
         self.top = height/2
-        self.zoom_level = 1.2
+        self.zoom_level = 0.05
         self.zoomed_width = width
         self.zoomed_height = height
 
@@ -93,18 +95,18 @@ class EnvRenderer(pyglet.window.Window):
         self.vertices = None
 
         # current score label
-        self.score_label = pyglet.text.Label(
-                'Lap Time: {laptime:.2f}, Ego Lap Count: {count:.0f}'.format(
-                    laptime=0.0, count=0.0),
-                font_size=36,
-                x=0,
-                y=-800,
-                anchor_x='center',
-                anchor_y='center',
-                # width=0.01,
-                # height=0.01,
-                color=(255, 255, 255, 255),
-                batch=self.batch)
+        # self.score_label = pyglet.text.Label(
+        #         'Lap Time: {laptime:.2f}, Ego Lap Count: {count:.0f}'.format(
+        #             laptime=0.0, count=0.0),
+        #         font_size=36,
+        #         x=0,
+        #         y=-800,
+        #         anchor_x='center',
+        #         anchor_y='center',
+        #         # width=0.01,
+        #         # height=0.01,
+        #         color=(255, 255, 255, 255),
+        #         batch=self.batch)
 
         self.fps_display = pyglet.window.FPSDisplay(self)
 
@@ -132,26 +134,20 @@ class EnvRenderer(pyglet.window.Window):
                 print(ex)
 
         # load map image
-        map_img = np.array(Image.open(map_path + map_ext).transpose(Image.FLIP_TOP_BOTTOM)).astype(np.float64)
-        map_height = map_img.shape[0]
-        map_width = map_img.shape[1]
+        map_img = image.load(map_path + map_ext)
+        # TODO: Flip image
+        # map_img = np.array(Image.open(map_path + map_ext).transpose(Image.FLIP_TOP_BOTTOM)).astype(np.float64)
+        map_height = map_img.height
+        map_width = map_img.width
 
-        # convert map pixels to coordinates
-        range_x = np.arange(map_width)
-        range_y = np.arange(map_height)
-        map_x, map_y = np.meshgrid(range_x, range_y)
-        map_x = (map_x * map_resolution + origin_x).flatten()
-        map_y = (map_y * map_resolution + origin_y).flatten()
-        map_z = np.zeros(map_y.shape)
-        map_coords = np.vstack((map_x, map_y, map_z))
+        map_sprite = pyglet.sprite.Sprite(map_img, x=origin_x, y=origin_y, batch=self.batch, subpixel=True)
+        map_sprite.scale = map_resolution
+        self.map_points = map_sprite
 
-        # mask and only leave the obstacle points
-        map_mask = map_img == 0.0
-        map_mask_flat = map_mask.flatten()
-        map_points = 50. * map_coords[:, map_mask_flat].T
-        for i in range(map_points.shape[0]):
-            self.batch.add(1, GL_POINTS, None, ('v3f/stream', [map_points[i, 0], map_points[i, 1], map_points[i, 2]]), ('c3B/stream', [183, 193, 222]))
-        self.map_points = map_points
+        # self.score_label.x = 0
+        # self.score_label.y = map_height * map_resolution + 10
+
+        self.zoom_level = map_resolution
 
     def on_resize(self, width, height):
         """
@@ -219,7 +215,7 @@ class EnvRenderer(pyglet.window.Window):
         f = ZOOM_IN_FACTOR if dy > 0 else ZOOM_OUT_FACTOR if dy < 0 else 1
 
         # If zoom_level is in the proper range
-        if .01 < self.zoom_level * f < 10:
+        if .01 < self.zoom_level * f < 20:
 
             self.zoom_level *= f
 
@@ -268,32 +264,35 @@ class EnvRenderer(pyglet.window.Window):
         """
 
         # if map and poses doesn't exist, raise exception
-        if self.map_points is None:
-            raise Exception('Map not set for renderer.')
+        # if self.map_points is None:
+        #     raise Exception('Map not set for renderer.')
         if self.poses is None:
             raise Exception('Agent poses not updated for renderer.')
 
         # Initialize Projection matrix
-        glMatrixMode(GL_PROJECTION)
-        glLoadIdentity()
+        # glMatrixMode(GL_PROJECTION)
+        # glLoadIdentity()
 
         # Initialize Modelview matrix
-        glMatrixMode(GL_MODELVIEW)
-        glLoadIdentity()
+        # glMatrixMode(GL_MODELVIEW)
+        # glLoadIdentity()
         # Save the default modelview matrix
-        glPushMatrix()
+        # glPushMatrix()
 
         # Clear window with ClearColor
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        # glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
         # Set orthographic projection matrix
-        glOrtho(self.left, self.right, self.bottom, self.top, 1, -1)
+        self.projection = Mat4.orthogonal_projection(
+            self.left, self.right, self.bottom, self.top, 1, -1
+        )
 
         # Draw all batches
+        self.clear()
         self.batch.draw()
-        self.fps_display.draw()
+        # self.fps_display.draw()
         # Remove default modelview matrix
-        glPopMatrix()
+        # glPopMatrix()
 
     def update_obs(self, obs):
         """
@@ -317,20 +316,18 @@ class EnvRenderer(pyglet.window.Window):
             for i in range(num_agents):
                 if i == self.ego_idx:
                     vertices_np = get_vertices(np.array([0., 0., 0.]), CAR_LENGTH, CAR_WIDTH)
-                    vertices = list(vertices_np.flatten())
-                    car = self.batch.add(4, GL_QUADS, None, ('v2f', vertices), ('c3B', [172, 97, 185, 172, 97, 185, 172, 97, 185, 172, 97, 185]))
+                    car = shapes.Polygon(*vertices_np, color=(50, 225, 30), batch=self.batch)
                     self.cars.append(car)
                 else:
                     vertices_np = get_vertices(np.array([0., 0., 0.]), CAR_LENGTH, CAR_WIDTH)
-                    vertices = list(vertices_np.flatten())
-                    car = self.batch.add(4, GL_QUADS, None, ('v2f', vertices), ('c3B', [99, 52, 94, 99, 52, 94, 99, 52, 94, 99, 52, 94]))
+                    car = shapes.Polygon(*vertices_np, color=(50, 225, 30), batch=self.batch)
                     self.cars.append(car)
 
         poses = np.stack((poses_x, poses_y, poses_theta)).T
         for j in range(poses.shape[0]):
-            vertices_np = 50. * get_vertices(poses[j, :], CAR_LENGTH, CAR_WIDTH)
-            vertices = list(vertices_np.flatten())
-            self.cars[j].vertices = vertices
+            # vertices_np = 50. * get_vertices(poses[j, :], CAR_LENGTH, CAR_WIDTH)
+            self.cars[j].position = (poses[j, 0], poses[j, 1])
+            self.cars[j].rotation = -np.degrees(poses[j, 2])
         self.poses = poses
 
-        self.score_label.text = 'Lap Time: {laptime:.2f}, Ego Lap Count: {count:.0f}'.format(laptime=obs['lap_times'][0], count=obs['lap_counts'][obs['ego_idx']])
+        # self.score_label.text = 'Lap Time: {laptime:.2f}, Ego Lap Count: {count:.0f}'.format(laptime=obs['lap_times'][0], count=obs['lap_counts'][obs['ego_idx']])
